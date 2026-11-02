@@ -17,7 +17,7 @@
   .pos{color:#34d399}.neg{color:#f87171}
   input,select{width:100%;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:10px;color:#fff;font-size:14px}
   input:focus,select:focus{outline:none;border-color:#10b981}
-  .card input{background:#0f172a}
+  .card input,.card select{background:#0f172a}
   button{border:0;border-radius:8px;padding:10px 14px;font-size:14px;font-weight:600;color:#fff;cursor:pointer}
   .primary{background:#059669;width:100%;margin-top:10px}
   .primary:hover{background:#10b981}
@@ -30,29 +30,45 @@
   .small{font-size:12px;color:#94a3b8}
   .del{background:none;color:#64748b;padding:2px 6px;font-size:18px}
   .del:hover{color:#f87171}
-  .close{display:flex;gap:8px;margin-top:8px}
+  .sellrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
   .err{color:#f87171;font-size:12px;margin-top:8px;min-height:14px}
   .empty{text-align:center;color:#64748b;padding:24px 0;font-size:14px}
   .mt{margin-top:10px}
+  .badge{display:inline-block;font-size:11px;font-weight:600;border-radius:6px;padding:2px 7px;margin-left:6px}
+  .b-Open{background:#334155;color:#cbd5e1}
+  .b-Sebagian{background:#78350f;color:#fcd34d}
+  .b-Closed{background:#064e3b;color:#6ee7b7}
+  .sellline{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#cbd5e1;border-top:1px solid #334155;padding:4px 0}
+  .pairbox{border-top:1px solid #334155;padding:10px 0 2px}
+  .pairbox:first-of-type{border-top:0}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>📒 Jurnal Trading Spot</h1>
-  <div class="sub">Catat entry &amp; exit, pantau performa. Data tersimpan di browser kamu.</div>
+  <div class="sub">Catat beli &amp; jual (termasuk jual sebagian), fee otomatis. Data tersimpan di browser kamu.</div>
 
   <div class="grid2" id="stats"></div>
   <div class="card mt" id="chart"></div>
+  <div class="card mt" id="pairsum"></div>
 
   <div class="card mt">
     <div style="font-weight:700;margin-bottom:10px">➕ Tambah trade</div>
     <div class="grid2">
       <input id="tgl" type="date">
       <input id="pair" placeholder="Pair (BTC/USDT)">
+      <select id="buytype">
+        <option value="limit">Beli Limit (0,11555%)</option>
+        <option value="market">Beli Market (0,26555%)</option>
+      </select>
+      <select id="selltype">
+        <option value="limit">Jual Limit (0,10555%)</option>
+        <option value="market">Jual Market (0,25555%)</option>
+      </select>
       <input id="entry" type="number" step="any" placeholder="Harga entry">
       <input id="exit" type="number" step="any" placeholder="Harga exit (kosong = open)">
-      <input id="qty" type="number" step="any" placeholder="Jumlah koin">
-      <input id="fee" type="number" step="any" placeholder="Total fee">
+      <input id="qty" type="number" step="any" placeholder="Jumlah koin dibeli">
+      <input id="sellqty" type="number" step="any" placeholder="Jumlah koin dijual (kosong = semua)">
     </div>
     <input id="catatan" class="mt" placeholder="Catatan / alasan entry">
     <div class="err" id="err"></div>
@@ -69,57 +85,120 @@
 
 <script>
 const KEY = "jurnal-trading:trades";
-let trades = [];
-try { trades = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) {}
+const RATE = {
+  buy: { limit: 0.0011555, market: 0.0026555 },
+  sell: { limit: 0.0010555, market: 0.0025555 }
+};
+const TYPE_LBL = { limit: "Limit", market: "Market", lama: "(data lama)" };
 
 const $ = (id) => document.getElementById(id);
-const fmt = (n) => Number(n).toLocaleString("id-ID", { maximumFractionDigits: 2 });
-const fmtQty = (n) => Number(n).toLocaleString("id-ID", { maximumFractionDigits: 8 });
+const sum = (a) => a.reduce((x, y) => x + y, 0);
+const uid = () => Date.now() * 1000 + Math.floor(Math.random() * 1000);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const pnlOf = (t) => (t.exit !== "" && t.exit != null ? (+t.exit - +t.entry) * +t.qty - +(t.fee || 0) : null);
+const typeLbl = (x) => TYPE_LBL[x] || "";
 const cls = (n) => (n > 0 ? "pos" : n < 0 ? "neg" : "");
+
+// uang (P&L, fee): maks 2 desimal
+const fmt = (n) => Number(n).toLocaleString("id-ID", { maximumFractionDigits: 2 });
+// jumlah koin: maks 8 desimal
+const fmtQty = (n) => Number(n).toLocaleString("id-ID", { maximumFractionDigits: 8 });
+// harga koin: di bawah 1 = 6 desimal, 1 ke atas = tanpa desimal
+const fmtPrice = (n) => {
+  n = Number(n);
+  if (Math.abs(n) < 1) return n.toLocaleString("id-ID", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+  return n.toLocaleString("id-ID", { maximumFractionDigits: 0 });
+};
+
+// ubah data format lama ke format baru
+function migrate(t) {
+  if (Array.isArray(t.sells)) return t;
+  const sells = [];
+  if (t.exit !== "" && t.exit != null) {
+    sells.push({ id: uid(), tgl: t.tgl, price: +t.exit, qty: +t.qty, type: "lama", fee: 0 });
+  }
+  return {
+    id: t.id, tgl: t.tgl, pair: t.pair, entry: +t.entry, qty: +t.qty,
+    buyType: "lama", buyFee: +(t.fee || 0), catatan: t.catatan || "", sells: sells
+  };
+}
+
+let trades = [];
+try { trades = (JSON.parse(localStorage.getItem(KEY)) || []).map(migrate); } catch (e) {}
+try { localStorage.setItem(KEY, JSON.stringify(trades)); } catch (e) {}
 
 function save() {
   localStorage.setItem(KEY, JSON.stringify(trades));
   render();
 }
 
+function info(t) {
+  const sold = +sum(t.sells.map((s) => s.qty)).toFixed(12);
+  const remaining = +(t.qty - sold).toFixed(12);
+  const sellFee = sum(t.sells.map((s) => s.fee));
+  const gain = sum(t.sells.map((s) => (s.price - t.entry) * s.qty));
+  const buyFeePart = t.qty ? t.buyFee * (sold / t.qty) : 0;
+  const pnl = t.sells.length ? gain - sellFee - buyFeePart : null;
+  const cost = t.entry * sold;
+  const pct = pnl !== null && cost ? (pnl / cost) * 100 : null;
+  const status = remaining <= 0 ? "Closed" : sold > 0 ? "Sebagian" : "Open";
+  return { sold: sold, remaining: remaining, sellFee: sellFee, pnl: pnl, pct: pct, status: status };
+}
+
 function addTrade() {
+  const setErr = (m) => { $("err").textContent = m; };
   const pair = $("pair").value.trim().toUpperCase();
-  const entry = $("entry").value;
-  const qty = $("qty").value;
-  if (!pair || !+entry || !+qty) {
-    $("err").textContent = "Isi minimal: pair, harga entry, dan jumlah koin.";
-    return;
+  const entry = +$("entry").value;
+  const qty = +$("qty").value;
+  const exitV = $("exit").value;
+  const sellQtyV = $("sellqty").value;
+  if (!pair || !entry || !qty) { setErr("Isi minimal: pair, harga entry, dan jumlah koin dibeli."); return; }
+  const buyType = $("buytype").value;
+  const sellType = $("selltype").value;
+  const tgl = $("tgl").value || new Date().toISOString().slice(0, 10);
+  const lot = {
+    id: uid(), tgl: tgl, pair: pair, entry: entry, qty: qty,
+    buyType: buyType, buyFee: entry * qty * RATE.buy[buyType],
+    catatan: $("catatan").value, sells: []
+  };
+  if (exitV !== "" || sellQtyV !== "") {
+    const price = +exitV;
+    if (!price) { setErr("Isi harga exit untuk koin yang dijual."); return; }
+    const sq = sellQtyV === "" ? qty : +sellQtyV;
+    if (!(sq > 0) || sq > qty + 1e-12) { setErr("Jumlah dijual harus lebih dari 0 dan tidak boleh melebihi jumlah dibeli."); return; }
+    lot.sells.push({ id: uid(), tgl: tgl, price: price, qty: sq, type: sellType, fee: price * sq * RATE.sell[sellType] });
   }
-  $("err").textContent = "";
-  trades.unshift({
-    id: Date.now(),
-    tgl: $("tgl").value || new Date().toISOString().slice(0, 10),
-    pair: pair,
-    entry: entry,
-    exit: $("exit").value,
-    qty: qty,
-    fee: $("fee").value,
-    catatan: $("catatan").value
-  });
-  ["pair", "entry", "exit", "qty", "fee", "catatan"].forEach((i) => ($(i).value = ""));
+  setErr("");
+  trades.unshift(lot);
+  ["pair", "entry", "exit", "qty", "sellqty", "catatan"].forEach((i) => ($(i).value = ""));
+  save();
+}
+
+function sellLot(id) {
+  const t = trades.find((x) => x.id === id);
+  if (!t) return;
+  const price = +$("p" + id).value;
+  const qv = $("q" + id).value;
+  const type = $("t" + id).value;
+  const remaining = info(t).remaining;
+  if (!price) { alert("Isi harga exit dulu."); return; }
+  const sq = qv === "" ? remaining : +qv;
+  if (!(sq > 0) || sq > remaining + 1e-12) { alert("Jumlah dijual harus lebih dari 0 dan maksimal " + fmtQty(remaining) + "."); return; }
+  t.sells.push({ id: uid(), tgl: new Date().toISOString().slice(0, 10), price: price, qty: sq, type: type, fee: price * sq * RATE.sell[type] });
+  save();
+}
+
+function delSell(tid, sid) {
+  if (!confirm("Hapus catatan penjualan ini?")) return;
+  const t = trades.find((x) => x.id === tid);
+  if (t) t.sells = t.sells.filter((s) => s.id !== sid);
   save();
 }
 
 function del(id) {
-  if (confirm("Hapus trade ini?")) {
+  if (confirm("Hapus trade ini beserta semua penjualannya?")) {
     trades = trades.filter((t) => t.id !== id);
     save();
   }
-}
-
-function closeTrade(id) {
-  const v = $("c" + id).value;
-  if (!+v) return;
-  const t = trades.find((x) => x.id === id);
-  if (t) t.exit = v;
-  save();
 }
 
 function view() {
@@ -136,10 +215,36 @@ function drawChart(curve) {
   const y = (v) => H - P - ((v - mn) / r) * (H - 2 * P);
   const pts = curve.map((v, i) => x(i) + "," + y(v)).join(" ");
   $("chart").innerHTML =
-    '<div class="lbl">Kurva P&amp;L kumulatif</div>' +
+    '<div class="lbl">Kurva P&amp;L kumulatif (per penjualan)</div>' +
     '<svg viewBox="0 0 ' + W + " " + H + '" width="100%">' +
     '<line x1="' + P + '" x2="' + (W - P) + '" y1="' + y(0) + '" y2="' + y(0) + '" stroke="#475569" stroke-dasharray="4"/>' +
     '<polyline fill="none" stroke="#34d399" stroke-width="2.5" points="' + pts + '"/></svg>';
+}
+
+function pairSummary(list) {
+  const groups = {};
+  list.forEach((t) => { (groups[t.pair] = groups[t.pair] || []).push(t); });
+  const names = Object.keys(groups).sort();
+  if (!names.length) { $("pairsum").style.display = "none"; return; }
+  $("pairsum").style.display = "block";
+  $("pairsum").innerHTML =
+    '<div class="lbl" style="margin-bottom:8px">Ringkasan per pair</div>' +
+    names.map((n) => {
+      const ts = groups[n];
+      const bq = sum(ts.map((t) => t.qty));
+      const bv = sum(ts.map((t) => t.entry * t.qty));
+      const sells = [].concat.apply([], ts.map((t) => t.sells));
+      const sq = sum(sells.map((s) => s.qty));
+      const sv = sum(sells.map((s) => s.price * s.qty));
+      const fb = sum(ts.map((t) => t.buyFee));
+      const fs = sum(sells.map((s) => s.fee));
+      return '<div class="pairbox"><div class="pair" style="margin-bottom:6px">' + esc(n) + '</div><div class="grid2">' +
+        '<div><div class="lbl">Rata-rata beli</div><b>' + (bq ? fmtPrice(bv / bq) : "-") + '</b><div class="small">Total beli ' + fmtQty(bq) + "</div></div>" +
+        '<div><div class="lbl">Rata-rata jual</div><b>' + (sq ? fmtPrice(sv / sq) : "-") + '</b><div class="small">Total jual ' + fmtQty(sq) + "</div></div>" +
+        '<div><div class="lbl">Fee beli</div><b>' + fmt(fb) + "</b></div>" +
+        '<div><div class="lbl">Fee jual</div><b>' + fmt(fs) + "</b></div>" +
+        "</div></div>";
+    }).join("");
 }
 
 function render() {
@@ -150,54 +255,81 @@ function render() {
   sel.value = pairs.indexOf(cur) >= 0 ? cur : "";
 
   const list = view();
-  const closed = list.filter((t) => pnlOf(t) !== null);
-  const pnls = closed.map(pnlOf);
-  const total = pnls.reduce((a, b) => a + b, 0);
+  const infos = list.map((t) => ({ t: t, i: info(t) }));
+  const pnls = infos.filter((x) => x.i.pnl !== null).map((x) => x.i.pnl);
+  const total = sum(pnls);
   const wins = pnls.filter((p) => p > 0).length;
-  const winrate = closed.length ? (wins / closed.length) * 100 : 0;
+  const winrate = pnls.length ? (wins / pnls.length) * 100 : 0;
   const best = pnls.length ? Math.max(...pnls) : 0;
   const worst = pnls.length ? Math.min(...pnls) : 0;
+  const openCount = infos.filter((x) => x.i.status !== "Closed").length;
+  const feeBuy = sum(list.map((t) => t.buyFee));
+  const feeSell = sum(infos.map((x) => x.i.sellFee));
 
   $("stats").innerHTML =
-    '<div class="card"><div class="lbl">Total P&amp;L</div><div class="val ' + cls(total) + '">' + fmt(total) + "</div></div>" +
+    '<div class="card"><div class="lbl">Total P&amp;L (realisasi)</div><div class="val ' + cls(total) + '">' + fmt(total) + "</div></div>" +
     '<div class="card"><div class="lbl">Win rate</div><div class="val">' + fmt(winrate) + "%</div></div>" +
-    '<div class="card"><div class="lbl">Trade (open)</div><div class="val">' + list.length + ' <span class="small">(' + (list.length - closed.length) + ")</span></div></div>" +
-    '<div class="card"><div class="lbl">Terbaik / Terburuk</div><div style="font-weight:700"><span class="pos">' + fmt(best) + '</span> / <span class="neg">' + fmt(worst) + "</span></div></div>";
+    '<div class="card"><div class="lbl">Trade (belum tuntas)</div><div class="val">' + list.length + ' <span class="small">(' + openCount + ")</span></div></div>" +
+    '<div class="card"><div class="lbl">Terbaik / Terburuk</div><div style="font-weight:700"><span class="' + cls(best) + '">' + fmt(best) + '</span> / <span class="' + cls(worst) + '">' + fmt(worst) + "</span></div></div>" +
+    '<div class="card"><div class="lbl">Total fee beli</div><div class="val">' + fmt(feeBuy) + "</div></div>" +
+    '<div class="card"><div class="lbl">Total fee jual</div><div class="val">' + fmt(feeSell) + "</div></div>";
 
-  const sorted = [...closed].sort((a, b) => a.tgl.localeCompare(b.tgl) || a.id - b.id);
+  const ev = [];
+  list.forEach((t) => t.sells.forEach((s) => {
+    ev.push({ d: s.tgl, id: s.id, v: (s.price - t.entry) * s.qty - s.fee - (t.qty ? (t.buyFee * s.qty) / t.qty : 0) });
+  }));
+  ev.sort((a, b) => String(a.d).localeCompare(String(b.d)) || a.id - b.id);
   let run = 0;
-  drawChart(sorted.map((t) => (run += pnlOf(t))));
+  drawChart(ev.map((e) => (run += e.v)));
+
+  pairSummary(list);
 
   if (!list.length) {
     $("list").innerHTML = '<div class="empty">Belum ada trade. Tambahkan yang pertama di atas.</div>';
     return;
   }
-  $("list").innerHTML = list.map((t) => {
-    const p = pnlOf(t);
-    let body;
-    if (p !== null) {
-      const pct = ((+t.exit - +t.entry) / +t.entry) * 100;
-      body = '<div class="mt ' + cls(p) + '" style="font-weight:700">' + (p >= 0 ? "▲ " : "▼ ") + fmt(p) + " (" + fmt(pct) + '%) <span class="small" style="font-weight:400">exit ' + fmt(t.exit) + "</span></div>";
-    } else {
-      body = '<div class="close"><input id="c' + t.id + '" type="number" step="any" placeholder="Harga exit untuk menutup"><button class="gray" onclick="closeTrade(' + t.id + ')">Tutup</button></div>';
+  $("list").innerHTML = infos.map((x) => {
+    const t = x.t, i = x.i;
+    let html = '<div class="trade"><div class="row"><div>' +
+      '<div class="pair">' + esc(t.pair) + ' <span class="small" style="font-weight:400">' + esc(t.tgl) + "</span>" +
+      '<span class="badge b-' + i.status + '">' + i.status + "</span></div>" +
+      '<div class="small">Beli ' + typeLbl(t.buyType) + " · Entry " + fmtPrice(t.entry) + " · Qty " + fmtQty(t.qty) + " · Fee beli " + fmt(t.buyFee) + "</div>" +
+      '<div class="small">Terjual ' + fmtQty(i.sold) + " · Sisa " + fmtQty(i.remaining) + "</div></div>" +
+      '<button class="del" onclick="del(' + t.id + ')">🗑</button></div>';
+
+    if (t.sells.length) {
+      html += '<div class="mt">' + t.sells.map((s) =>
+        '<div class="sellline"><span>Jual ' + typeLbl(s.type) + " " + fmtQty(s.qty) + " @ " + fmtPrice(s.price) + " · fee " + fmt(s.fee) + " · " + esc(s.tgl) + "</span>" +
+        '<button class="del" onclick="delSell(' + t.id + "," + s.id + ')">×</button></div>').join("") + "</div>";
     }
-    return '<div class="trade"><div class="row"><div><div class="pair">' + esc(t.pair) + ' <span class="small" style="font-weight:400">' + esc(t.tgl) + "</span></div>" +
-      '<div class="small">Entry ' + fmt(t.entry) + " · Qty " + fmtQty(t.qty) + (t.fee ? " · Fee " + fmt(t.fee) : "") + "</div></div>" +
-      '<button class="del" onclick="del(' + t.id + ')">🗑</button></div>' + body +
-      (t.catatan ? '<div class="small mt">📝 ' + esc(t.catatan) + "</div>" : "") + "</div>";
+    if (i.pnl !== null) {
+      html += '<div class="mt ' + cls(i.pnl) + '" style="font-weight:700">' + (i.pnl >= 0 ? "▲ " : "▼ ") + fmt(i.pnl) +
+        (i.pct !== null ? " (" + fmt(i.pct) + "%)" : "") + ' <span class="small" style="font-weight:400">P&amp;L realisasi</span></div>';
+    }
+    if (i.remaining > 0) {
+      html += '<div class="sellrow">' +
+        '<input id="p' + t.id + '" type="number" step="any" placeholder="Harga exit untuk menutup">' +
+        '<input id="q' + t.id + '" type="number" step="any" placeholder="Jumlah dijual (kosong = semua)">' +
+        '<select id="t' + t.id + '"><option value="limit">Jual Limit (0,10555%)</option><option value="market">Jual Market (0,25555%)</option></select>' +
+        '<button class="gray" onclick="sellLot(' + t.id + ')">Jual</button></div>';
+    }
+    if (t.catatan) html += '<div class="small mt">📝 ' + esc(t.catatan) + "</div>";
+    return html + "</div>";
   }).join("");
 }
 
 function exportCSV() {
-  const rows = [["Tanggal", "Pair", "Entry", "Exit", "Qty", "Fee", "PnL", "PnL %", "Status", "Catatan"]];
+  const rows = [["Tanggal", "Pair", "Tipe Beli", "Entry", "Qty Beli", "Fee Beli", "Qty Terjual", "Rata2 Jual", "Fee Jual", "Sisa Qty", "PnL Realisasi", "PnL %", "Status", "Catatan"]];
   view().forEach((t) => {
-    const p = pnlOf(t);
+    const i = info(t);
+    const sq = sum(t.sells.map((s) => s.qty));
+    const sv = sum(t.sells.map((s) => s.price * s.qty));
     rows.push([
-      t.tgl, t.pair, t.entry, t.exit, t.qty, t.fee,
-      p === null ? "" : p.toFixed(2),
-      p === null ? "" : (((+t.exit - +t.entry) / +t.entry) * 100).toFixed(2),
-      p === null ? "Open" : "Closed",
-      t.catatan
+      t.tgl, t.pair, typeLbl(t.buyType), t.entry, t.qty, t.buyFee.toFixed(2),
+      i.sold, sq ? +(sv / sq).toFixed(8) : "", i.sellFee.toFixed(2), i.remaining,
+      i.pnl === null ? "" : i.pnl.toFixed(2),
+      i.pct === null ? "" : i.pct.toFixed(2),
+      i.status, t.catatan
     ]);
   });
   const csv = rows.map((r) => r.map((c) => '"' + String(c == null ? "" : c).replace(/"/g, '""') + '"').join(",")).join("\n");
