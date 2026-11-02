@@ -65,10 +65,10 @@
         <option value="limit">Jual Limit (0,10555%)</option>
         <option value="market">Jual Market (0,25555%)</option>
       </select>
-      <input id="entry" type="number" step="any" placeholder="Harga entry">
-      <input id="exit" type="number" step="any" placeholder="Harga exit (kosong = open)">
-      <input id="qty" type="number" step="any" placeholder="Jumlah koin dibeli">
-      <input id="sellqty" type="number" step="any" placeholder="Jumlah koin dijual (kosong = semua)">
+      <input id="entry" type="text" inputmode="decimal" placeholder="Harga entry">
+      <input id="exit" type="text" inputmode="decimal" placeholder="Harga exit (kosong = open)">
+      <input id="qty" type="text" inputmode="decimal" placeholder="Jumlah koin dibeli">
+      <input id="sellqty" type="text" inputmode="decimal" placeholder="Jumlah koin dijual (kosong = semua)">
     </div>
     <input id="catatan" class="mt" placeholder="Catatan / alasan entry">
     <div class="err" id="err"></div>
@@ -85,7 +85,8 @@
 
 <script>
 const KEY = "jurnal-trading:trades";
-const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx0xcjWbsLrSvguVwvTO_SbzE2D4GS-ASVY42XCdxdS/devc";
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyB_U2Mi8_IQghW8r6w9Sr4usAoRkS9y9va3cbc_boyVnqW3x0q_ijx077VILlg7G4S/exec";
+
 const RATE = {
   buy: { limit: 0.0011555, market: 0.0026555 },
   sell: { limit: 0.0010555, market: 0.0025555 }
@@ -99,27 +100,31 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&":
 const typeLbl = (x) => TYPE_LBL[x] || "";
 const cls = (n) => (n > 0 ? "pos" : n < 0 ? "neg" : "");
 
-// uang (P&L, fee): maks 2 desimal
-const fmt = (n) => Number(n).toLocaleString("id-ID", { maximumFractionDigits: 2 });
-// jumlah koin: maks 8 desimal
-const fmtQty = (n) => Number(n).toLocaleString("id-ID", { maximumFractionDigits: 8 });
-// harga koin: di bawah 1 = 6 desimal, 1 ke atas = tanpa desimal
+// Pembaca angka aman (mengonversi koma ke titik)
+const parseNum = (v) => {
+  if (v == null || v === "") return 0;
+  const n = Number(String(v).replace(',', '.'));
+  return isNaN(n) ? 0 : n;
+};
+
+// Format tampilan angka
+const fmt = (n) => Number(parseNum(n)).toLocaleString("id-ID", { maximumFractionDigits: 2 });
+const fmtQty = (n) => Number(parseNum(n)).toLocaleString("id-ID", { maximumFractionDigits: 8 });
 const fmtPrice = (n) => {
-  n = Number(n);
+  n = parseNum(n);
   if (Math.abs(n) < 1) return n.toLocaleString("id-ID", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
   return n.toLocaleString("id-ID", { maximumFractionDigits: 0 });
 };
 
-// ubah data format lama ke format baru
 function migrate(t) {
   if (Array.isArray(t.sells)) return t;
   const sells = [];
   if (t.exit !== "" && t.exit != null) {
-    sells.push({ id: uid(), tgl: t.tgl, price: +t.exit, qty: +t.qty, type: "lama", fee: 0 });
+    sells.push({ id: uid(), tgl: t.tgl, price: parseNum(t.exit), qty: parseNum(t.qty), type: "lama", fee: 0 });
   }
   return {
-    id: t.id, tgl: t.tgl, pair: t.pair, entry: +t.entry, qty: +t.qty,
-    buyType: "lama", buyFee: +(t.fee || 0), catatan: t.catatan || "", sells: sells
+    id: t.id, tgl: t.tgl, pair: t.pair, entry: parseNum(t.entry), qty: parseNum(t.qty),
+    buyType: "lama", buyFee: parseNum(t.fee || 0), catatan: t.catatan || "", sells: sells
   };
 }
 
@@ -147,7 +152,7 @@ async function loadFromCloud() {
     const res = await fetch(WEB_APP_URL);
     const data = await res.json();
     if (data.status === "success" && Array.isArray(data.trades) && data.trades.length > 0) {
-      trades = data.trades;
+      trades = data.trades.map(migrate);
       localStorage.setItem(KEY, JSON.stringify(trades));
       render();
     }
@@ -163,9 +168,6 @@ function save() {
 }
 
 function info(t) {
-  // Konversi koma ke titik agar angka desimal dibaca dengan benar
-  const parseNum = (v) => Number(String(v == null ? 0 : v).replace(',', '.'));
-  
   const tQty = parseNum(t.qty);
   const tEntry = parseNum(t.entry);
   const tBuyFee = parseNum(t.buyFee);
@@ -179,17 +181,17 @@ function info(t) {
   const cost = tEntry * sold;
   const pct = pnl !== null && cost ? (pnl / cost) * 100 : null;
   const status = remaining <= 0 ? "Closed" : sold > 0 ? "Sebagian" : "Open";
-  
   return { sold: sold, remaining: remaining, sellFee: sellFee, pnl: pnl, pct: pct, status: status };
 }
 
 function addTrade() {
   const setErr = (m) => { $("err").textContent = m; };
   const pair = $("pair").value.trim().toUpperCase();
-  const entry = +$("entry").value;
-  const qty = +$("qty").value;
-  const exitV = $("exit").value;
-  const sellQtyV = $("sellqty").value;
+  const entry = parseNum($("entry").value);
+  const qty = parseNum($("qty").value);
+  const exitV = $("exit").value.trim();
+  const sellQtyV = $("sellqty").value.trim();
+
   if (!pair || !entry || !qty) { setErr("Isi minimal: pair, harga entry, dan jumlah koin dibeli."); return; }
   const buyType = $("buytype").value;
   const sellType = $("selltype").value;
@@ -200,9 +202,9 @@ function addTrade() {
     catatan: $("catatan").value, sells: []
   };
   if (exitV !== "" || sellQtyV !== "") {
-    const price = +exitV;
+    const price = parseNum(exitV);
     if (!price) { setErr("Isi harga exit untuk koin yang dijual."); return; }
-    const sq = sellQtyV === "" ? qty : +sellQtyV;
+    const sq = sellQtyV === "" ? qty : parseNum(sellQtyV);
     if (!(sq > 0) || sq > qty + 1e-12) { setErr("Jumlah dijual harus lebih dari 0 dan tidak boleh melebihi jumlah dibeli."); return; }
     lot.sells.push({ id: uid(), tgl: tgl, price: price, qty: sq, type: sellType, fee: price * sq * RATE.sell[sellType] });
   }
@@ -215,12 +217,15 @@ function addTrade() {
 function sellLot(id) {
   const t = trades.find((x) => x.id === id);
   if (!t) return;
-  const price = +$("p" + id).value;
-  const qv = $("q" + id).value;
+  const priceStr = $("p" + id).value.trim();
+  const qvStr = $("q" + id).value.trim();
   const type = $("t" + id).value;
   const remaining = info(t).remaining;
-  if (!price) { alert("Isi harga exit dulu."); return; }
-  const sq = qv === "" ? remaining : +qv;
+
+  const price = parseNum(priceStr);
+  if (!priceStr || !price) { alert("Isi harga exit dulu."); return; }
+
+  const sq = qvStr === "" ? remaining : parseNum(qvStr);
   if (!(sq > 0) || sq > remaining + 1e-12) { alert("Jumlah dijual harus lebih dari 0 dan maksimal " + fmtQty(remaining) + "."); return; }
   t.sells.push({ id: uid(), tgl: new Date().toISOString().slice(0, 10), price: price, qty: sq, type: type, fee: price * sq * RATE.sell[type] });
   save();
@@ -270,13 +275,13 @@ function pairSummary(list) {
     '<div class="lbl" style="margin-bottom:8px">Ringkasan per pair</div>' +
     names.map((n) => {
       const ts = groups[n];
-      const bq = sum(ts.map((t) => t.qty));
-      const bv = sum(ts.map((t) => t.entry * t.qty));
+      const bq = sum(ts.map((t) => parseNum(t.qty)));
+      const bv = sum(ts.map((t) => parseNum(t.entry) * parseNum(t.qty)));
       const sells = [].concat.apply([], ts.map((t) => t.sells));
-      const sq = sum(sells.map((s) => s.qty));
-      const sv = sum(sells.map((s) => s.price * s.qty));
-      const fb = sum(ts.map((t) => t.buyFee));
-      const fs = sum(sells.map((s) => s.fee));
+      const sq = sum(sells.map((s) => parseNum(s.qty)));
+      const sv = sum(sells.map((s) => parseNum(s.price) * parseNum(s.qty)));
+      const fb = sum(ts.map((t) => parseNum(t.buyFee)));
+      const fs = sum(sells.map((s) => parseNum(s.fee)));
       return '<div class="pairbox"><div class="pair" style="margin-bottom:6px">' + esc(n) + '</div><div class="grid2">' +
         '<div><div class="lbl">Rata-rata beli</div><b>' + (bq ? fmtPrice(bv / bq) : "-") + '</b><div class="small">Total beli ' + fmtQty(bq) + "</div></div>" +
         '<div><div class="lbl">Rata-rata jual</div><b>' + (sq ? fmtPrice(sv / sq) : "-") + '</b><div class="small">Total jual ' + fmtQty(sq) + "</div></div>" +
@@ -302,7 +307,7 @@ function render() {
   const best = pnls.length ? Math.max(...pnls) : 0;
   const worst = pnls.length ? Math.min(...pnls) : 0;
   const openCount = infos.filter((x) => x.i.status !== "Closed").length;
-  const feeBuy = sum(list.map((t) => t.buyFee));
+  const feeBuy = sum(list.map((t) => parseNum(t.buyFee)));
   const feeSell = sum(infos.map((x) => x.i.sellFee));
 
   $("stats").innerHTML =
@@ -315,7 +320,13 @@ function render() {
 
   const ev = [];
   list.forEach((t) => t.sells.forEach((s) => {
-    ev.push({ d: s.tgl, id: s.id, v: (s.price - t.entry) * s.qty - s.fee - (t.qty ? (t.buyFee * s.qty) / t.qty : 0) });
+    const ePrice = parseNum(t.entry);
+    const sPrice = parseNum(s.price);
+    const sQty = parseNum(s.qty);
+    const sFee = parseNum(s.fee);
+    const tQty = parseNum(t.qty);
+    const tBuyFee = parseNum(t.buyFee);
+    ev.push({ d: s.tgl, id: s.id, v: (sPrice - ePrice) * sQty - sFee - (tQty ? (tBuyFee * sQty) / tQty : 0) });
   }));
   ev.sort((a, b) => String(a.d).localeCompare(String(b.d)) || a.id - b.id);
   let run = 0;
@@ -347,8 +358,8 @@ function render() {
     }
     if (i.remaining > 0) {
       html += '<div class="sellrow">' +
-        '<input id="p' + t.id + '" type="number" step="any" placeholder="Harga exit untuk menutup">' +
-        '<input id="q' + t.id + '" type="number" step="any" placeholder="Jumlah dijual (kosong = semua)">' +
+        '<input id="p' + t.id + '" type="text" inputmode="decimal" placeholder="Harga exit untuk menutup">' +
+        '<input id="q' + t.id + '" type="text" inputmode="decimal" placeholder="Jumlah dijual (kosong = semua)">' +
         '<select id="t' + t.id + '"><option value="limit">Jual Limit (0,10555%)</option><option value="market">Jual Market (0,25555%)</option></select>' +
         '<button class="gray" onclick="sellLot(' + t.id + ')">Jual</button></div>';
     }
@@ -361,10 +372,10 @@ function exportCSV() {
   const rows = [["Tanggal", "Pair", "Tipe Beli", "Entry", "Qty Beli", "Fee Beli", "Qty Terjual", "Rata2 Jual", "Fee Jual", "Sisa Qty", "PnL Realisasi", "PnL %", "Status", "Catatan"]];
   view().forEach((t) => {
     const i = info(t);
-    const sq = sum(t.sells.map((s) => s.qty));
-    const sv = sum(t.sells.map((s) => s.price * s.qty));
+    const sq = sum(t.sells.map((s) => parseNum(s.qty)));
+    const sv = sum(t.sells.map((s) => parseNum(s.price) * parseNum(s.qty)));
     rows.push([
-      t.tgl, t.pair, typeLbl(t.buyType), t.entry, t.qty, t.buyFee.toFixed(2),
+      t.tgl, t.pair, typeLbl(t.buyType), parseNum(t.entry), parseNum(t.qty), parseNum(t.buyFee).toFixed(2),
       i.sold, sq ? +(sv / sq).toFixed(8) : "", i.sellFee.toFixed(2), i.remaining,
       i.pnl === null ? "" : i.pnl.toFixed(2),
       i.pct === null ? "" : i.pct.toFixed(2),
