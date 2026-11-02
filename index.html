@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jurnal Trading Spot Crypto</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#0f172a;color:#f1f5f9;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px}
+  .wrap{max-width:680px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:#94a3b8;font-size:13px;margin-bottom:16px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .card{background:#1e293b;border-radius:12px;padding:12px}
+  .lbl{font-size:12px;color:#94a3b8;margin-bottom:4px}
+  .val{font-size:20px;font-weight:700}
+  .pos{color:#34d399}.neg{color:#f87171}
+  input,select{width:100%;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:10px;color:#fff;font-size:14px}
+  input:focus,select:focus{outline:none;border-color:#10b981}
+  .card input{background:#0f172a}
+  button{border:0;border-radius:8px;padding:10px 14px;font-size:14px;font-weight:600;color:#fff;cursor:pointer}
+  .primary{background:#059669;width:100%;margin-top:10px}
+  .primary:hover{background:#10b981}
+  .gray{background:#334155}.gray:hover{background:#475569}
+  .toolbar{display:flex;gap:10px;margin:16px 0 10px}
+  .toolbar select{flex:1}
+  .trade{background:#1e293b;border-radius:12px;padding:12px;margin-bottom:8px}
+  .row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  .pair{font-weight:700}
+  .small{font-size:12px;color:#94a3b8}
+  .del{background:none;color:#64748b;padding:2px 6px;font-size:18px}
+  .del:hover{color:#f87171}
+  .close{display:flex;gap:8px;margin-top:8px}
+  .err{color:#f87171;font-size:12px;margin-top:8px;min-height:14px}
+  .empty{text-align:center;color:#64748b;padding:24px 0;font-size:14px}
+  .mt{margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📒 Jurnal Trading Spot</h1>
+  <div class="sub">Catat entry &amp; exit, pantau performa. Data tersimpan di browser kamu.</div>
+
+  <div class="grid2" id="stats"></div>
+  <div class="card mt" id="chart"></div>
+
+  <div class="card mt">
+    <div style="font-weight:700;margin-bottom:10px">➕ Tambah trade</div>
+    <div class="grid2">
+      <input id="tgl" type="date">
+      <input id="pair" placeholder="Pair (BTC/USDT)">
+      <input id="entry" type="number" step="any" placeholder="Harga entry">
+      <input id="exit" type="number" step="any" placeholder="Harga exit (kosong = open)">
+      <input id="qty" type="number" step="any" placeholder="Jumlah koin">
+      <input id="fee" type="number" step="any" placeholder="Total fee">
+    </div>
+    <input id="catatan" class="mt" placeholder="Catatan / alasan entry">
+    <div class="err" id="err"></div>
+    <button class="primary" onclick="addTrade()">Simpan trade</button>
+  </div>
+
+  <div class="toolbar">
+    <select id="filter" onchange="render()"></select>
+    <button class="gray" onclick="exportCSV()">⬇️ Ekspor CSV</button>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script>
+const KEY = "jurnal-trading:trades";
+let trades = [];
+try { trades = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) {}
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n).toLocaleString("id-ID", { maximumFractionDigits: 2 });
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pnlOf = (t) => (t.exit !== "" && t.exit != null ? (+t.exit - +t.entry) * +t.qty - +(t.fee || 0) : null);
+const cls = (n) => (n > 0 ? "pos" : n < 0 ? "neg" : "");
+
+function save() {
+  localStorage.setItem(KEY, JSON.stringify(trades));
+  render();
+}
+
+function addTrade() {
+  const pair = $("pair").value.trim().toUpperCase();
+  const entry = $("entry").value;
+  const qty = $("qty").value;
+  if (!pair || !+entry || !+qty) {
+    $("err").textContent = "Isi minimal: pair, harga entry, dan jumlah koin.";
+    return;
+  }
+  $("err").textContent = "";
+  trades.unshift({
+    id: Date.now(),
+    tgl: $("tgl").value || new Date().toISOString().slice(0, 10),
+    pair: pair,
+    entry: entry,
+    exit: $("exit").value,
+    qty: qty,
+    fee: $("fee").value,
+    catatan: $("catatan").value
+  });
+  ["pair", "entry", "exit", "qty", "fee", "catatan"].forEach((i) => ($(i).value = ""));
+  save();
+}
+
+function del(id) {
+  if (confirm("Hapus trade ini?")) {
+    trades = trades.filter((t) => t.id !== id);
+    save();
+  }
+}
+
+function closeTrade(id) {
+  const v = $("c" + id).value;
+  if (!+v) return;
+  const t = trades.find((x) => x.id === id);
+  if (t) t.exit = v;
+  save();
+}
+
+function view() {
+  const f = $("filter").value;
+  return f ? trades.filter((t) => t.pair === f) : trades;
+}
+
+function drawChart(curve) {
+  if (curve.length < 2) { $("chart").style.display = "none"; return; }
+  $("chart").style.display = "block";
+  const W = 600, H = 160, P = 10;
+  const mn = Math.min(0, ...curve), mx = Math.max(0, ...curve), r = (mx - mn) || 1;
+  const x = (i) => P + (i / (curve.length - 1)) * (W - 2 * P);
+  const y = (v) => H - P - ((v - mn) / r) * (H - 2 * P);
+  const pts = curve.map((v, i) => x(i) + "," + y(v)).join(" ");
+  $("chart").innerHTML =
+    '<div class="lbl">Kurva P&amp;L kumulatif</div>' +
+    '<svg viewBox="0 0 ' + W + " " + H + '" width="100%">' +
+    '<line x1="' + P + '" x2="' + (W - P) + '" y1="' + y(0) + '" y2="' + y(0) + '" stroke="#475569" stroke-dasharray="4"/>' +
+    '<polyline fill="none" stroke="#34d399" stroke-width="2.5" points="' + pts + '"/></svg>';
+}
+
+function render() {
+  const pairs = [...new Set(trades.map((t) => t.pair))].sort();
+  const sel = $("filter");
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Semua pair</option>' + pairs.map((p) => "<option>" + esc(p) + "</option>").join("");
+  sel.value = pairs.indexOf(cur) >= 0 ? cur : "";
+
+  const list = view();
+  const closed = list.filter((t) => pnlOf(t) !== null);
+  const pnls = closed.map(pnlOf);
+  const total = pnls.reduce((a, b) => a + b, 0);
+  const wins = pnls.filter((p) => p > 0).length;
+  const winrate = closed.length ? (wins / closed.length) * 100 : 0;
+  const best = pnls.length ? Math.max(...pnls) : 0;
+  const worst = pnls.length ? Math.min(...pnls) : 0;
+
+  $("stats").innerHTML =
+    '<div class="card"><div class="lbl">Total P&amp;L</div><div class="val ' + cls(total) + '">' + fmt(total) + "</div></div>" +
+    '<div class="card"><div class="lbl">Win rate</div><div class="val">' + fmt(winrate) + "%</div></div>" +
+    '<div class="card"><div class="lbl">Trade (open)</div><div class="val">' + list.length + ' <span class="small">(' + (list.length - closed.length) + ")</span></div></div>" +
+    '<div class="card"><div class="lbl">Terbaik / Terburuk</div><div style="font-weight:700"><span class="pos">' + fmt(best) + '</span> / <span class="neg">' + fmt(worst) + "</span></div></div>";
+
+  const sorted = [...closed].sort((a, b) => a.tgl.localeCompare(b.tgl) || a.id - b.id);
+  let run = 0;
+  drawChart(sorted.map((t) => (run += pnlOf(t))));
+
+  if (!list.length) {
+    $("list").innerHTML = '<div class="empty">Belum ada trade. Tambahkan yang pertama di atas.</div>';
+    return;
+  }
+  $("list").innerHTML = list.map((t) => {
+    const p = pnlOf(t);
+    let body;
+    if (p !== null) {
+      const pct = ((+t.exit - +t.entry) / +t.entry) * 100;
+      body = '<div class="mt ' + cls(p) + '" style="font-weight:700">' + (p >= 0 ? "▲ " : "▼ ") + fmt(p) + " (" + fmt(pct) + '%) <span class="small" style="font-weight:400">exit ' + fmt(t.exit) + "</span></div>";
+    } else {
+      body = '<div class="close"><input id="c' + t.id + '" type="number" step="any" placeholder="Harga exit untuk menutup"><button class="gray" onclick="closeTrade(' + t.id + ')">Tutup</button></div>';
+    }
+    return '<div class="trade"><div class="row"><div><div class="pair">' + esc(t.pair) + ' <span class="small" style="font-weight:400">' + esc(t.tgl) + "</span></div>" +
+      '<div class="small">Entry ' + fmt(t.entry) + " · Qty " + fmt(t.qty) + (t.fee ? " · Fee " + fmt(t.fee) : "") + "</div></div>" +
+      '<button class="del" onclick="del(' + t.id + ')">🗑</button></div>' + body +
+      (t.catatan ? '<div class="small mt">📝 ' + esc(t.catatan) + "</div>" : "") + "</div>";
+  }).join("");
+}
+
+function exportCSV() {
+  const rows = [["Tanggal", "Pair", "Entry", "Exit", "Qty", "Fee", "PnL", "PnL %", "Status", "Catatan"]];
+  view().forEach((t) => {
+    const p = pnlOf(t);
+    rows.push([
+      t.tgl, t.pair, t.entry, t.exit, t.qty, t.fee,
+      p === null ? "" : p.toFixed(2),
+      p === null ? "" : (((+t.exit - +t.entry) / +t.entry) * 100).toFixed(2),
+      p === null ? "Open" : "Closed",
+      t.catatan
+    ]);
+  });
+  const csv = rows.map((r) => r.map((c) => '"' + String(c == null ? "" : c).replace(/"/g, '""') + '"').join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = "jurnal-trading-" + new Date().toISOString().slice(0, 10) + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+$("tgl").value = new Date().toISOString().slice(0, 10);
+render();
+</script>
+</body>
+</html>
