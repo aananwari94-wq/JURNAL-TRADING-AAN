@@ -85,7 +85,7 @@
 
 <script>
 const KEY = "jurnal-trading:trades";
-const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx09KUalFmN788Cth1nvxGOlGaI12ed3KEa2vnvZ_Lp57R6NdRGWlUoTHfC44XeeUEXVg/exec";
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyB_U2Mi8_IQghW8r6w9Sr4usAoRkS9y9va3cbc_boyVnqW3x0q_ijx077VILlg7G4S/exec";
 
 const RATE = {
   buy: { limit: 0.0011555, market: 0.0026555 },
@@ -95,13 +95,27 @@ const TYPE_LBL = { limit: "Limit", market: "Market", lama: "(data lama)" };
 
 const $ = (id) => document.getElementById(id);
 const sum = (a) => a.reduce((x, y) => x + y, 0);
-// ID menggunakan awalan string 't_' agar tidak terganggu notasi ilmiah Google Sheets
 const uid = () => "t_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const typeLbl = (x) => TYPE_LBL[x] || "";
 const cls = (n) => (n > 0 ? "pos" : n < 0 ? "neg" : "");
 
-// Pembaca angka aman (terima angka murni, titik, mau pun koma)
+// Konversi tanggal aman zona waktu lokal
+const cleanDate = (dStr) => {
+  if (!dStr) return new Date().toLocaleDateString('sv-SE');
+  const s = String(dStr);
+  if (s.includes("T")) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+  }
+  return s.split("T")[0];
+};
+
 const parseNum = (v) => {
   if (v == null || v === "") return 0;
   if (typeof v === "number") return isNaN(v) ? 0 : v;
@@ -109,7 +123,6 @@ const parseNum = (v) => {
   return isNaN(n) ? 0 : n;
 };
 
-// Format tampilan angka
 const fmt = (n) => Number(parseNum(n)).toLocaleString("id-ID", { maximumFractionDigits: 2 });
 const fmtQty = (n) => Number(parseNum(n)).toLocaleString("id-ID", { maximumFractionDigits: 8 });
 const fmtPrice = (n) => {
@@ -119,13 +132,13 @@ const fmtPrice = (n) => {
 };
 
 function migrate(t) {
-  if (Array.isArray(t.sells)) return t;
+  if (Array.isArray(t.sells)) return { ...t, tgl: cleanDate(t.tgl) };
   const sells = [];
   if (t.exit !== "" && t.exit != null) {
-    sells.push({ id: uid(), tgl: t.tgl, price: parseNum(t.exit), qty: parseNum(t.qty), type: "lama", fee: 0 });
+    sells.push({ id: uid(), tgl: cleanDate(t.tgl), price: parseNum(t.exit), qty: parseNum(t.qty), type: "lama", fee: 0 });
   }
   return {
-    id: String(t.id), tgl: t.tgl, pair: t.pair, entry: parseNum(t.entry), qty: parseNum(t.qty),
+    id: String(t.id), tgl: cleanDate(t.tgl), pair: t.pair, entry: parseNum(t.entry), qty: parseNum(t.qty),
     buyType: "lama", buyFee: parseNum(t.fee || 0), catatan: t.catatan || "", sells: sells
   };
 }
@@ -197,7 +210,7 @@ function addTrade() {
   if (!pair || !entry || !qty) { setErr("Isi minimal: pair, harga entry, dan jumlah koin dibeli."); return; }
   const buyType = $("buytype").value;
   const sellType = $("selltype").value;
-  const tgl = $("tgl").value || new Date().toISOString().slice(0, 10);
+  const tgl = cleanDate($("tgl").value || new Date());
   const lot = {
     id: uid(), tgl: tgl, pair: pair, entry: entry, qty: qty,
     buyType: buyType, buyFee: entry * qty * RATE.buy[buyType],
@@ -217,7 +230,6 @@ function addTrade() {
 }
 
 function sellLot(id) {
-  // Pencocokan ID berbasis String yang presisi
   const t = trades.find((x) => String(x.id) === String(id));
   if (!t) return;
   const priceStr = $("p" + id).value.trim();
@@ -230,7 +242,7 @@ function sellLot(id) {
 
   const sq = qvStr === "" ? remaining : parseNum(qvStr);
   if (!(sq > 0) || sq > remaining + 1e-12) { alert("Jumlah dijual harus lebih dari 0 dan maksimal " + fmtQty(remaining) + "."); return; }
-  t.sells.push({ id: uid(), tgl: new Date().toISOString().slice(0, 10), price: price, qty: sq, type: type, fee: price * sq * RATE.sell[type] });
+  t.sells.push({ id: uid(), tgl: cleanDate(new Date()), price: price, qty: sq, type: type, fee: price * sq * RATE.sell[type] });
   save();
 }
 
@@ -329,7 +341,7 @@ function render() {
     const sFee = parseNum(s.fee);
     const tQty = parseNum(t.qty);
     const tBuyFee = parseNum(t.buyFee);
-    ev.push({ d: s.tgl, id: s.id, v: (sPrice - ePrice) * sQty - sFee - (tQty ? (tBuyFee * sQty) / tQty : 0) });
+    ev.push({ d: cleanDate(s.tgl), id: s.id, v: (sPrice - ePrice) * sQty - sFee - (tQty ? (tBuyFee * sQty) / tQty : 0) });
   }));
   ev.sort((a, b) => String(a.d).localeCompare(String(b.d)) || String(a.id).localeCompare(String(b.id)));
   let run = 0;
@@ -344,7 +356,7 @@ function render() {
   $("list").innerHTML = infos.map((x) => {
     const t = x.t, i = x.i;
     let html = '<div class="trade"><div class="row"><div>' +
-      '<div class="pair">' + esc(t.pair) + ' <span class="small" style="font-weight:400">' + esc(t.tgl) + "</span>" +
+      '<div class="pair">' + esc(t.pair) + ' <span class="small" style="font-weight:400">' + esc(cleanDate(t.tgl)) + "</span>" +
       '<span class="badge b-' + i.status + '">' + i.status + "</span></div>" +
       '<div class="small">Beli ' + typeLbl(t.buyType) + " · Entry " + fmtPrice(t.entry) + " · Qty " + fmtQty(t.qty) + " · Fee beli " + fmt(t.buyFee) + "</div>" +
       '<div class="small">Terjual ' + fmtQty(i.sold) + " · Sisa " + fmtQty(i.remaining) + "</div></div>" +
@@ -352,7 +364,7 @@ function render() {
 
     if (t.sells.length) {
       html += '<div class="mt">' + t.sells.map((s) =>
-        '<div class="sellline"><span>Jual ' + typeLbl(s.type) + " " + fmtQty(s.qty) + " @ " + fmtPrice(s.price) + " · fee " + fmt(s.fee) + " · " + esc(s.tgl) + "</span>" +
+        '<div class="sellline"><span>Jual ' + typeLbl(s.type) + " " + fmtQty(s.qty) + " @ " + fmtPrice(s.price) + " · fee " + fmt(s.fee) + " · " + esc(cleanDate(s.tgl)) + "</span>" +
         '<button class="del" onclick="delSell(\'' + t.id + '\', \'' + s.id + '\')">×</button></div>').join("") + "</div>";
     }
     if (i.pnl !== null) {
@@ -378,7 +390,7 @@ function exportCSV() {
     const sq = sum(t.sells.map((s) => parseNum(s.qty)));
     const sv = sum(t.sells.map((s) => parseNum(s.price) * parseNum(s.qty)));
     rows.push([
-      t.tgl, t.pair, typeLbl(t.buyType), parseNum(t.entry), parseNum(t.qty), parseNum(t.buyFee).toFixed(2),
+      cleanDate(t.tgl), t.pair, typeLbl(t.buyType), parseNum(t.entry), parseNum(t.qty), parseNum(t.buyFee).toFixed(2),
       i.sold, sq ? +(sv / sq).toFixed(8) : "", i.sellFee.toFixed(2), i.remaining,
       i.pnl === null ? "" : i.pnl.toFixed(2),
       i.pct === null ? "" : i.pct.toFixed(2),
@@ -388,13 +400,13 @@ function exportCSV() {
   const csv = rows.map((r) => r.map((c) => '"' + String(c == null ? "" : c).replace(/"/g, '""') + '"').join(",")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));
-  a.download = "jurnal-trading-" + new Date().toISOString().slice(0, 10) + ".csv";
+  a.download = "jurnal-trading-" + cleanDate(new Date()) + ".csv";
   document.body.appendChild(a);
   a.click();
   a.remove();
 }
 
-$("tgl").value = new Date().toISOString().slice(0, 10);
+$("tgl").value = cleanDate(new Date());
 render();
 loadFromCloud();
 </script>
