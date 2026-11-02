@@ -85,7 +85,7 @@
 
 <script>
 const KEY = "jurnal-trading:trades";
-const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx09KUalFmN788Cth1nvxGOlGaI12ed3KEa2vnvZ_Lp57R6NdRGWlUoTHfC44XeeUEXVg/exec";
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyB_U2Mi8_IQghW8r6w9Sr4usAoRkS9y9va3cbc_boyVnqW3x0q_ijx077VILlg7G4S/exec";
 
 const RATE = {
   buy: { limit: 0.0011555, market: 0.0026555 },
@@ -95,14 +95,16 @@ const TYPE_LBL = { limit: "Limit", market: "Market", lama: "(data lama)" };
 
 const $ = (id) => document.getElementById(id);
 const sum = (a) => a.reduce((x, y) => x + y, 0);
-const uid = () => Date.now() * 1000 + Math.floor(Math.random() * 1000);
+// ID menggunakan awalan string 't_' agar tidak terganggu notasi ilmiah Google Sheets
+const uid = () => "t_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const typeLbl = (x) => TYPE_LBL[x] || "";
 const cls = (n) => (n > 0 ? "pos" : n < 0 ? "neg" : "");
 
-// Pembaca angka aman (mengonversi koma ke titik)
+// Pembaca angka aman (terima angka murni, titik, mau pun koma)
 const parseNum = (v) => {
   if (v == null || v === "") return 0;
+  if (typeof v === "number") return isNaN(v) ? 0 : v;
   const n = Number(String(v).replace(',', '.'));
   return isNaN(n) ? 0 : n;
 };
@@ -123,7 +125,7 @@ function migrate(t) {
     sells.push({ id: uid(), tgl: t.tgl, price: parseNum(t.exit), qty: parseNum(t.qty), type: "lama", fee: 0 });
   }
   return {
-    id: t.id, tgl: t.tgl, pair: t.pair, entry: parseNum(t.entry), qty: parseNum(t.qty),
+    id: String(t.id), tgl: t.tgl, pair: t.pair, entry: parseNum(t.entry), qty: parseNum(t.qty),
     buyType: "lama", buyFee: parseNum(t.fee || 0), catatan: t.catatan || "", sells: sells
   };
 }
@@ -215,7 +217,8 @@ function addTrade() {
 }
 
 function sellLot(id) {
-  const t = trades.find((x) => x.id === id);
+  // Pencocokan ID berbasis String yang presisi
+  const t = trades.find((x) => String(x.id) === String(id));
   if (!t) return;
   const priceStr = $("p" + id).value.trim();
   const qvStr = $("q" + id).value.trim();
@@ -233,14 +236,14 @@ function sellLot(id) {
 
 function delSell(tid, sid) {
   if (!confirm("Hapus catatan penjualan ini?")) return;
-  const t = trades.find((x) => x.id === tid);
-  if (t) t.sells = t.sells.filter((s) => s.id !== sid);
+  const t = trades.find((x) => String(x.id) === String(tid));
+  if (t) t.sells = t.sells.filter((s) => String(s.id) !== String(sid));
   save();
 }
 
 function del(id) {
   if (confirm("Hapus trade ini beserta semua penjualannya?")) {
-    trades = trades.filter((t) => t.id !== id);
+    trades = trades.filter((t) => String(t.id) !== String(id));
     save();
   }
 }
@@ -328,7 +331,7 @@ function render() {
     const tBuyFee = parseNum(t.buyFee);
     ev.push({ d: s.tgl, id: s.id, v: (sPrice - ePrice) * sQty - sFee - (tQty ? (tBuyFee * sQty) / tQty : 0) });
   }));
-  ev.sort((a, b) => String(a.d).localeCompare(String(b.d)) || a.id - b.id);
+  ev.sort((a, b) => String(a.d).localeCompare(String(b.d)) || String(a.id).localeCompare(String(b.id)));
   let run = 0;
   drawChart(ev.map((e) => (run += e.v)));
 
@@ -345,12 +348,12 @@ function render() {
       '<span class="badge b-' + i.status + '">' + i.status + "</span></div>" +
       '<div class="small">Beli ' + typeLbl(t.buyType) + " · Entry " + fmtPrice(t.entry) + " · Qty " + fmtQty(t.qty) + " · Fee beli " + fmt(t.buyFee) + "</div>" +
       '<div class="small">Terjual ' + fmtQty(i.sold) + " · Sisa " + fmtQty(i.remaining) + "</div></div>" +
-      '<button class="del" onclick="del(' + t.id + ')">🗑</button></div>';
+      '<button class="del" onclick="del(\'' + t.id + '\')">🗑</button></div>';
 
     if (t.sells.length) {
       html += '<div class="mt">' + t.sells.map((s) =>
         '<div class="sellline"><span>Jual ' + typeLbl(s.type) + " " + fmtQty(s.qty) + " @ " + fmtPrice(s.price) + " · fee " + fmt(s.fee) + " · " + esc(s.tgl) + "</span>" +
-        '<button class="del" onclick="delSell(' + t.id + "," + s.id + ')">×</button></div>').join("") + "</div>";
+        '<button class="del" onclick="delSell(\'' + t.id + '\', \'' + s.id + '\')">×</button></div>').join("") + "</div>";
     }
     if (i.pnl !== null) {
       html += '<div class="mt ' + cls(i.pnl) + '" style="font-weight:700">' + (i.pnl >= 0 ? "▲ " : "▼ ") + fmt(i.pnl) +
@@ -361,7 +364,7 @@ function render() {
         '<input id="p' + t.id + '" type="text" inputmode="decimal" placeholder="Harga exit untuk menutup">' +
         '<input id="q' + t.id + '" type="text" inputmode="decimal" placeholder="Jumlah dijual (kosong = semua)">' +
         '<select id="t' + t.id + '"><option value="limit">Jual Limit (0,10555%)</option><option value="market">Jual Market (0,25555%)</option></select>' +
-        '<button class="gray" onclick="sellLot(' + t.id + ')">Jual</button></div>';
+        '<button class="gray" onclick="sellLot(\'' + t.id + '\')">Jual</button></div>';
     }
     if (t.catatan) html += '<div class="small mt">📝 ' + esc(t.catatan) + "</div>";
     return html + "</div>";
