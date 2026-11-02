@@ -74,6 +74,7 @@ try { trades = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) {}
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString("id-ID", { maximumFractionDigits: 2 });
+const fmtQty = (n) => Number(n).toLocaleString("id-ID", { maximumFractionDigits: 8 });
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pnlOf = (t) => (t.exit !== "" && t.exit != null ? (+t.exit - +t.entry) * +t.qty - +(t.fee || 0) : null);
 const cls = (n) => (n > 0 ? "pos" : n < 0 ? "neg" : "");
@@ -181,7 +182,7 @@ function render() {
       body = '<div class="close"><input id="c' + t.id + '" type="number" step="any" placeholder="Harga exit untuk menutup"><button class="gray" onclick="closeTrade(' + t.id + ')">Tutup</button></div>';
     }
     return '<div class="trade"><div class="row"><div><div class="pair">' + esc(t.pair) + ' <span class="small" style="font-weight:400">' + esc(t.tgl) + "</span></div>" +
-      '<div class="small">Entry ' + fmt(t.entry) + " · Qty " + fmt(t.qty) + (t.fee ? " · Fee " + fmt(t.fee) : "") + "</div></div>" +
+      '<div class="small">Entry ' + fmt(t.entry) + " · Qty " + fmtQty(t.qty) + (t.fee ? " · Fee " + fmt(t.fee) : "") + "</div></div>" +
       '<button class="del" onclick="del(' + t.id + ')">🗑</button></div>' + body +
       (t.catatan ? '<div class="small mt">📝 ' + esc(t.catatan) + "</div>" : "") + "</div>";
   }).join("");
