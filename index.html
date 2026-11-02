@@ -163,15 +163,23 @@ function save() {
 }
 
 function info(t) {
-  const sold = +sum(t.sells.map((s) => s.qty)).toFixed(12);
-  const remaining = +(t.qty - sold).toFixed(12);
-  const sellFee = sum(t.sells.map((s) => s.fee));
-  const gain = sum(t.sells.map((s) => (s.price - t.entry) * s.qty));
-  const buyFeePart = t.qty ? t.buyFee * (sold / t.qty) : 0;
+  // Konversi koma ke titik agar angka desimal dibaca dengan benar
+  const parseNum = (v) => Number(String(v == null ? 0 : v).replace(',', '.'));
+  
+  const tQty = parseNum(t.qty);
+  const tEntry = parseNum(t.entry);
+  const tBuyFee = parseNum(t.buyFee);
+
+  const sold = +sum(t.sells.map((s) => parseNum(s.qty))).toFixed(12);
+  const remaining = +(tQty - sold).toFixed(12);
+  const sellFee = sum(t.sells.map((s) => parseNum(s.fee)));
+  const gain = sum(t.sells.map((s) => (parseNum(s.price) - tEntry) * parseNum(s.qty)));
+  const buyFeePart = tQty ? tBuyFee * (sold / tQty) : 0;
   const pnl = t.sells.length ? gain - sellFee - buyFeePart : null;
-  const cost = t.entry * sold;
+  const cost = tEntry * sold;
   const pct = pnl !== null && cost ? (pnl / cost) * 100 : null;
   const status = remaining <= 0 ? "Closed" : sold > 0 ? "Sebagian" : "Open";
+  
   return { sold: sold, remaining: remaining, sellFee: sellFee, pnl: pnl, pct: pct, status: status };
 }
 
