@@ -46,7 +46,7 @@
 <body>
 <div class="wrap">
   <h1>📒 Jurnal Trading Spot</h1>
-  <div class="sub">Catat beli &amp; jual (termasuk jual sebagian), fee otomatis. Data tersimpan di browser kamu.</div>
+  <div class="sub">Catat beli &amp; jual (termasuk jual sebagian), fee otomatis. Data tersimpan di browser kamu &amp; Google Sheets.</div>
 
   <div class="grid2" id="stats"></div>
   <div class="card mt" id="chart"></div>
@@ -85,6 +85,8 @@
 
 <script>
 const KEY = "jurnal-trading:trades";
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwKWRW8WH-tXuMHkV9sG8Q6NIQWurGXULgvd_YycMymRHLEnMl6eE-kNUxN0gHxe9JaHw/exec";
+
 const RATE = {
   buy: { limit: 0.0011555, market: 0.0026555 },
   sell: { limit: 0.0010555, market: 0.0025555 }
@@ -126,8 +128,38 @@ let trades = [];
 try { trades = (JSON.parse(localStorage.getItem(KEY)) || []).map(migrate); } catch (e) {}
 try { localStorage.setItem(KEY, JSON.stringify(trades)); } catch (e) {}
 
+async function syncToCloud(currentTrades) {
+  if (!WEB_APP_URL || WEB_APP_URL.includes("MASUKKAN_URL")) return;
+  try {
+    await fetch(WEB_APP_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: "sync", trades: currentTrades })
+    });
+  } catch (err) {
+    console.error("Gagal sinkron ke cloud:", err);
+  }
+}
+
+async function loadFromCloud() {
+  if (!WEB_APP_URL || WEB_APP_URL.includes("MASUKKAN_URL")) return;
+  try {
+    const res = await fetch(WEB_APP_URL);
+    const data = await res.json();
+    if (data.status === "success" && Array.isArray(data.trades) && data.trades.length > 0) {
+      trades = data.trades;
+      localStorage.setItem(KEY, JSON.stringify(trades));
+      render();
+    }
+  } catch (err) {
+    console.error("Gagal memuat dari cloud:", err);
+  }
+}
+
 function save() {
   localStorage.setItem(KEY, JSON.stringify(trades));
+  syncToCloud(trades);
   render();
 }
 
@@ -343,6 +375,7 @@ function exportCSV() {
 
 $("tgl").value = new Date().toISOString().slice(0, 10);
 render();
+loadFromCloud();
 </script>
 </body>
 </html>
